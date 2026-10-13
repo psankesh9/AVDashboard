@@ -105,6 +105,9 @@ t["total_km"] = t[CLASSES].sum(1)
 ok = t.total_km > 0
 
 mix = t.loc[ok, CLASSES].div(t.loc[ok, "total_km"], axis=0)
+t.loc[ok, "pct_freeway"] = mix.km_freeway
+t.loc[ok, "pct_arterial"] = mix.km_arterial
+t.loc[ok, "pct_local"] = mix.km_local_group
 t.loc[ok, "risk_multiplier"] = (mix * mult.reindex(CLASSES)).sum(1)
 t.loc[ok, "risk_multiplier_lo"] = (mix * mult_lo.reindex(CLASSES)).sum(1)
 t.loc[ok, "risk_multiplier_hi"] = (mix * mult_hi.reindex(CLASSES)).sum(1)
@@ -119,7 +122,7 @@ t.loc[ok, "risk_percentile"] = (np.searchsorted(ref, t.loc[ok, "risk_multiplier"
 
 out = t.loc[ok, ["GEOID", "county", "population", "risk_multiplier", "risk_multiplier_lo",
                  "risk_multiplier_hi", "disengagements_per_million_miles", "dpmm_lo", "dpmm_hi",
-                 "n_sample", "risk_percentile"]]
+                 "n_sample", "risk_percentile", "pct_freeway", "pct_arterial", "pct_local"]]
 out.to_csv("outputs/tract_scores_disengagement.csv", index=False)
 print(f"\n   wrote outputs/tract_scores_disengagement.csv ({len(out):,} tracts)")
 print(f"\nSUMMARY: fleet base rate {base_rate*1e6:.2f}/million miles, "
