@@ -29,8 +29,15 @@ Everything below the line is Malachi's original handoff, kept as is. What happen
   - crossing density alone: 0.47;
   - the collision-trained crash model: 0.43.
 
-  Caveat: the specialised layers mostly mark busy streets in general. Only the junction layer tracks its own
-  kind of crash.
+  Caveat: on AV crashes the specialised layers mostly mark busy streets in general. Only the junction layer
+  tracks its own kind of crash, and there are only 6–19 located crashes per situation.
+- **Each layer against police-reported crashes (added later on 15 Oct).** CCRS 2022–24 has 365,921 located
+  crashes in LA, SF, San Mateo and Santa Clara.
+  - On the share of a 500 m cell's crashes of the matching type, 7 of 10 layers raise their own kind of crash.
+  - Junctions, curbside activity and freeway ramps don't.
+  - So most layers do mark where their situation happens. Whether AVs struggle there in particular, the AV
+    record is too thin to say.
+  - The map is also stable over time: 2019–22 vs 2023–24 reports, rank correlation 0.89.
 - **Rebuild:** see README ("What's in this repo"). `build_app.py` now runs from this repo with
   `AVGAP_MODELING` pointing at Project-DSC `Modeling/`. Your template changes are kept; the new pieces only
   appear in the `--disengagement` build.

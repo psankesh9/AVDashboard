@@ -50,9 +50,19 @@ The full method, every number, and the checks are in `notebooks/17_Disengagement
    - the collision-trained crash model: 0.43.
 
    At the 500 m cells it predicts, the riskiest tenth holds 56% of the crashes in them on 13% of the road km.
-5. **The 8/15 leave-one-company-out problem.** The road-type multiplier no longer comes from pooling
+5. **Each specialised model checked against police-reported crashes of its own kind.** The AV record has
+   6–19 located crashes per situation, too few to test the layers one by one. CHP's crash records (CCRS
+   2022–24, LA, SF, San Mateo, Santa Clara) have 365,921 located crashes with a collision type.
+   - The test is the share of a 500 m cell's crashes of the matching type (crosswalks → pedestrian, curves →
+     left the lane, Caltrans traffic → freeway rear-ends, ...). It uses all layers in one model and a 5 km
+     block bootstrap.
+   - 7 of the 10 layers raise their own crash type. Junctions, curbside activity and freeway ramps don't.
+   - The tract card marks each bar ✓ or ✗ accordingly.
+6. **The 8/15 leave-one-company-out problem.** The road-type multiplier no longer comes from pooling
    companies that drive different roads. It comes from within-company variation, and the map holds when any
    one of the eight largest filers is dropped (rank correlation 0.93 or higher).
+7. **Stable over time.** Rebuilt from 2019–22 reports alone (Apple 47%) or 2023–24 alone (May Mobility
+   55%), the tract maps agree at rank correlation 0.89.
 
 **Read it as:** a relative risk per mile (1 = an average California road mile), plus reports per 1,000
 miles at the 2024 median company's rate (0.50). Company rates differ by four orders of magnitude, so use the
@@ -70,7 +80,8 @@ safe.
   ```
 - **`source/template.html`**: the shared template. The disengagement build adds:
   - the per-mile tooltip;
-  - a tract card ("what makes it tricky" with each model's sample size, and the trickiest named stretches);
+  - a tract card ("what makes it tricky" with each model's sample size and its police-crash check, and the
+    trickiest named stretches);
   - a county card with a city table;
   - a "500 m grid" map mode;
   - a counties/cities table.

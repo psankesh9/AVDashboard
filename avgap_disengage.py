@@ -616,6 +616,38 @@ def map_loco(R, T_, ref, rho, companies):
     return pd.DataFrame(rows)
 
 
+def period_check(fit, T_, ref, scope, split=2022):
+    """
+    Out-of-time stability: the situation shares (midpoint of stated and imputed) and the map rebuilt from
+    the reports of 2019-`split` and of the years after, separately, and the raw filed-miles ratio on each
+    period's panel (uncalibrated: the simulation calibration was run on the full panel only).
+    `scope` = the tract ids the dashboard shows. Returns (shares by period, comparison table).
+    """
+    from scipy.stats import spearmanr
+    R, p = fit["report_table"], fit["panel"]
+    yr = R.month.dt.year
+    parts = {f"2019-{str(split)[2:]}": R[yr <= split], f"{str(split + 1)[2:]}-24": R[yr > split]}
+    sh = {k: 0.5 * situation_shares(x, "stated") + 0.5 * situation_shares(x, "imputed") for k, x in parts.items()}
+    sh["all years"] = _mid_shares(fit)
+    shares = pd.concat({k: v.T for k, v in sh.items()}, axis=1)
+    maps = {k: multipliers(T_, ref, fit["rho"], v)[0] for k, v in sh.items()}
+    (a, ma), (b, mb) = [(k, maps[k]) for k in parts]
+    sc = [g for g in scope if g in ma.index]
+    top = lambda m: set(m.reindex(sc).nlargest(len(sc) // 10).index)
+    py = p.year.astype(int)
+    vc = {k: x.company.value_counts(normalize=True) for k, x in parts.items()}
+    rows = {"reports": [len(parts[a]), len(parts[b]), ""],
+            "companies": [parts[a].company.nunique(), parts[b].company.nunique(), ""],
+            "largest filer": [f"{v.index[0]} ({v.iloc[0]:.0%})" for v in vc.values()] + [""],
+            "raw freeway / surface ratio (filed miles)": [ratio_from_miles(p[py <= split])["rho"],
+                                                          ratio_from_miles(p[py > split])["rho"], ""],
+            "map Spearman, all CA tracts": ["", "", spearmanr(ma, mb, nan_policy="omit")[0]],
+            "map Spearman, dashboard tracts": ["", "", spearmanr(ma.reindex(sc), mb.reindex(sc), nan_policy="omit")[0]],
+            "dashboard top tenth kept": ["", "", len(top(ma) & top(mb)) / len(top(ma))]}
+    comp = pd.DataFrame(rows, index=[a, b, f"{a} vs {b}"], dtype=object).T
+    return shares, comp
+
+
 def crash_situations(variants=SCEN_MODELS):
     """Consensus road situation of each DMV OL 316 collision narrative (avgap_llm scen-crash caches),
     indexed like located_crashes()'s rows (crash item dmv-<i> is row i)."""
@@ -650,6 +682,128 @@ def situation_check(Lt, ol, alloc, layers, km="road_km"):
                      "Spearman per km: its own crashes": _spearman_per_km(x, col, "own", km, min_crashes=5),
                      "Spearman per km: all other crashes": _spearman_per_km(x, col, "other", km)})
     return pd.DataFrame(rows).set_index("situation")
+
+
+# Each layer claims its feature marks where a road situation is common. Police-reported crashes of all
+# vehicles (CCRS 2022-24, notebook 12) carry a collision type and what was hit, so every layer can be held
+# against crashes of its own kind, where that situation happened and went wrong for a human driver: hundreds
+# of thousands of located crashes where the AV record has a handful per situation. Busy streets have more of
+# every crash, so the test is on the *mix*: the share of a cell's crashes that are of the layer's type, in a
+# joint quasi-binomial GLM with every layer of the road class and county fixed effects. A layer passes if it
+# raises its own type's share beyond what the other layers explain.
+POLICE_TYPES = {
+    "traffic control": "at a signal or stop sign (control device present)",
+    "intersection turn": "broadside, vehicle vs. vehicle",
+    "pedestrian": "vehicle vs. pedestrian",
+    "cyclist": "vehicle vs. bicycle",
+    "lane change or merge": "sideswipe, vehicle vs. vehicle",
+    "obstruction": "hit a parked vehicle",
+    "lane keeping": "hit an object or overturned (left the lane)",
+    "lane change or merge (freeway)": "freeway sideswipe",
+    "lane keeping (freeway)": "freeway: hit an object or overturned",
+    "other vehicle (freeway)": "freeway rear-end",
+}
+POLICE_COUNTIES = ["Los Angeles", "San Francisco", "San Mateo", "Santa Clara"]     # notebook 12's counties
+
+
+def police_crashes(refresh=False):
+    """CCRS crashes 2022-24 in notebook 12's four counties, located (avgap_context.locate_ccrs), with a
+    boolean column per POLICE_TYPES key and the road class ('surface' = not highway-related, 'freeway' =
+    IsFreeway). Cached in av_data/disengage/ccrs_located.pkl (~2 minutes to build)."""
+    import pickle
+    import avgap_context as J
+    path = os.path.join(DIS_DIR, "ccrs_located.pkl")
+    if os.path.exists(path) and not refresh:
+        c = pickle.load(open(path, "rb"))
+    else:
+        c = J.locate_ccrs(J.load_ccrs(counties=POLICE_COUNTIES))
+        pickle.dump(c, open(path, "wb"))
+    c = c[c.loc_source != "unlocated"].copy()
+    ct, mv = c["Collision Type Description"].fillna(""), c.MotorVehicleInvolvedWithDesc.fillna("")
+    sf, fw = ~c.highway, c.IsFreeway.eq("True")
+    left_lane = ct.isin(["HIT OBJECT", "OVERTURNED"]) | mv.eq("FIXED OBJECT")
+    c["cls"] = np.select([fw, sf], ["freeway", "surface"], "other")
+    for k, m in {"traffic control": sf & c.TrafficControlDeviceCode.isin(["A", "B", "C"]),   # D = no control
+                 "intersection turn": sf & ct.eq("BROADSIDE") & mv.eq("OTHER MOTOR VEHICLE"),
+                 "pedestrian": sf & mv.eq("PEDESTRIAN"), "cyclist": sf & mv.eq("BICYCLE"),
+                 "lane change or merge": sf & ct.eq("SIDE SWIPE") & mv.eq("OTHER MOTOR VEHICLE"),
+                 "obstruction": sf & mv.eq("PARKED MOTOR VEHICLE"), "lane keeping": sf & left_lane,
+                 "lane change or merge (freeway)": fw & ct.eq("SIDE SWIPE"),
+                 "lane keeping (freeway)": fw & left_lane,
+                 "other vehicle (freeway)": fw & ct.eq("REAR END")}.items():
+        c["t:" + k] = m.to_numpy()
+    r, cc = cell_of(c.loc_lon, c.loc_lat)
+    c["cell"] = [f"{a}_{b}" for a, b in zip(r, cc)]
+    return c
+
+
+def _joint_glm(x, X, k, n):
+    """Quasi-binomial GLM of type k's share of the cell's n crashes on every layer (standardised log
+    density) + county fixed effects -> coefficients of the layers."""
+    import statsmodels.api as sm
+    Z = pd.get_dummies(x.county, drop_first=True, dtype=float)
+    exog = sm.add_constant(pd.concat([X, Z], axis=1), has_constant="add")
+    y = np.column_stack([x["t:" + k], x[n] - x["t:" + k]])
+    return sm.GLM(y, exog, family=sm.families.Binomial()).fit(scale="X2").params[X.columns]
+
+
+def police_check(cells, ref, county_of, min_n=20, min_km=0.2, B=200, block=10, seed=0):
+    """
+    Specificity of the layers against police-reported crashes (see POLICE_TYPES), at 500 m cells in
+    POLICE_COUNTIES with min_km+ of the road class and min_n+ crashes on it.
+      share Spearman   within-county Spearman of each layer with each type's share of the cell's crashes
+      joint GLM        odds ratio per sd of log feature density, all layers of the class together; the
+                       90% range is a block bootstrap (block x block cells, ~5 km squares, resampled within
+                       county), since neighbouring cells are not independent
+    Returns (summary per layer, matrix of joint odds ratios [crash type x layer], cell table).
+    """
+    from scipy.stats import spearmanr
+    c = police_crashes()
+    cl = cells.assign(cell=[f"{a}_{b}" for a, b in zip(cells.row, cells.col)]).set_index("cell")
+    cl["county"] = cl.GEOID.astype(str).map(county_of)
+    cl = cl[cl.county.isin(POLICE_COUNTIES)].copy()
+    for k in ("surface", "freeway"):
+        cl["n_" + k] = c[c.cls == k].groupby("cell").size().reindex(cl.index).fillna(0).to_numpy()
+    for k in POLICE_TYPES:
+        cl["t:" + k] = c[c["t:" + k]].groupby("cell").size().reindex(cl.index).fillna(0).to_numpy()
+    fr = np.log(feature_ratios(cl, ref, beta=1.0))
+    rng = np.random.default_rng(seed)
+    rows, mat = [], {}
+    for cls, km in (("surface", "km_sf"), ("freeway", "km_fw")):
+        lay = [l for l in POLICE_TYPES if l.endswith("(freeway)") == (cls == "freeway")]
+        n = "n_" + cls
+        x = cl[(cl[n] >= min_n) & (cl[km] >= min_km)].copy()
+        X = fr.loc[x.index, lay]
+        X = (X - X.mean()) / X.std()
+        blk = x.county + ":" + (x.row // block).astype(str) + "_" + (x.col // block).astype(str)
+        groups = {cty: [np.flatnonzero((blk == b).to_numpy()) for b in blk[x.county == cty].unique()]
+                  for cty in x.county.unique()}
+        boot = []
+        for _ in range(B):
+            idx = np.concatenate([gs[i] for gs in groups.values() for i in rng.integers(0, len(gs), len(gs))])
+            boot.append({k: _joint_glm(x.iloc[idx], X.iloc[idx], k, n).to_numpy() for k in lay})
+        for k in lay:
+            b = _joint_glm(x, X, k, n)
+            mat[k] = np.exp(b)
+            bk = np.array([d[k] for d in boot])
+            j = lay.index(k)
+            own_first = (bk.argmax(axis=1) == j).mean()
+            sh = x["t:" + k] / x[n]
+            rho = {l: np.average([spearmanr(g[l], sh[g.index])[0] for _, g in X.assign(county=x.county).groupby("county")],
+                                 weights=[x.loc[g.index, "t:" + k].sum() for _, g in X.assign(county=x.county).groupby("county")])
+                   for l in lay}
+            other = max((l for l in lay if l != k), key=lambda l: b[l])
+            rows.append({"layer": FEATURE_LABEL[k], "situation": k, "police-reported crash type": POLICE_TYPES[k],
+                         "crashes": int(x["t:" + k].sum()), "share of the class": x["t:" + k].sum() / x[n].sum(),
+                         "cells": len(x), "own odds ratio per sd": float(np.exp(b[k])),
+                         "lo": float(np.exp(np.percentile(bk[:, j], 5))), "hi": float(np.exp(np.percentile(bk[:, j], 95))),
+                         "rank among layers": int((b > b[k]).sum() + 1), "of": len(lay),
+                         "own first in bootstrap": float(own_first),
+                         "strongest other layer": FEATURE_LABEL[other], "its odds ratio": float(np.exp(b[other])),
+                         "share Spearman: own": float(rho[k]),
+                         "share Spearman: best other": float(max(v for l, v in rho.items() if l != k))})
+    M = pd.DataFrame(mat).T.reindex(columns=list(POLICE_TYPES)).rename(columns=FEATURE_LABEL)
+    return pd.DataFrame(rows).set_index("layer"), M, cl
 
 
 def cell_check(cell_scores, cells, ol, footprint, county_of, min_km=0.2):
