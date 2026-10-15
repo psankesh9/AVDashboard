@@ -652,6 +652,43 @@ def situation_check(Lt, ol, alloc, layers, km="road_km"):
     return pd.DataFrame(rows).set_index("situation")
 
 
+def cell_check(cell_scores, cells, ol, footprint, county_of, min_km=0.2):
+    """
+    The check at the prediction unit: located autonomous-mode DMV crashes counted per 500 m cell, for the
+    cells (min_km+ of road) inside the deployment footprint that every score covers. For each
+    score: within-county Spearman with crashes per km, and the share of crashes in the riskiest tenth of
+    cells against that tenth's share of road km (lift). `cell_scores` maps a name to a Series indexed
+    "row_col".
+    """
+    from scipy.stats import spearmanr
+    x = ol[(ol["mode"] == "autonomous") & ol.loc_lon.notna()]
+    r, c = cell_of(x.loc_lon, x.loc_lat)
+    n = pd.Series(1, index=[f"{a}_{b}" for a, b in zip(r, c)]).groupby(level=0).sum()
+    cl = cells.assign(cell=[f"{a}_{b}" for a, b in zip(cells.row, cells.col)]).set_index("cell")
+    cl["road_km"] = cl.km_sf + cl.km_fw
+    cl = cl[cl.GEOID.isin(footprint) & (cl.road_km >= min_km)].copy()
+    cl["county"] = cl.GEOID.map(county_of)
+    cl["crashes"] = n.reindex(cl.index).fillna(0).to_numpy()
+    cl["per_km"] = cl.crashes / cl.road_km
+    common = set.intersection(*[set(v.dropna().index) for v in cell_scores.values()])
+    cl = cl[cl.index.isin(common)].copy()                      # every score on the same cells
+    rows = []
+    for name, sc in cell_scores.items():
+        v = sc.reindex(cl.index)
+        ok = v.notna()
+        rho = [(spearmanr(v[ok & (cl.county == k)], cl.per_km[ok & (cl.county == k)])[0], cl.crashes[cl.county == k].sum())
+               for k in cl.county.unique() if cl.crashes[ok & (cl.county == k)].sum() >= 10]
+        top = v[ok].rank(pct=True, method="average") > 0.9          # ties stay together
+        top = top.reindex(cl.index).fillna(False).astype(bool)
+        rows.append({"score": name, "cells": int(ok.sum()), "crashes": float(cl.crashes[ok].sum()),
+                     "within-county Spearman per km": float(np.average([a for a, _ in rho], weights=[b for _, b in rho])) if rho else np.nan,
+                     "top tenth: share of crashes": cl.crashes[top].sum() / cl.crashes[ok].sum(),
+                     "top tenth: share of road km": cl.road_km[top].sum() / cl.road_km[ok].sum()})
+    out = pd.DataFrame(rows).set_index("score")
+    out["lift"] = out["top tenth: share of crashes"] / out["top tenth: share of road km"]
+    return out, cl
+
+
 def situation_sheet(per_label=10, seed=0, write=True):
     """
     A blind check of the LLMs' road-situation labels for two human annotators: up to `per_label`

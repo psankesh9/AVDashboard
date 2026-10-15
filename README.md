@@ -48,6 +48,8 @@ The full method, every number, and the checks are in `notebooks/17_Disengagement
    - revision 2: 0.04; revision 1: −0.26;
    - crossing density alone: 0.47;
    - the collision-trained crash model: 0.43.
+
+   At the 500 m cells it predicts, the riskiest tenth holds 56% of those crashes on 13% of the road km.
 5. **The 8/15 leave-one-company-out problem.** The road-type multiplier no longer comes from pooling
    companies that drive different roads. It comes from within-company variation, and the map holds when any
    one of the eight largest filers is dropped (rank correlation 0.93 or higher).
