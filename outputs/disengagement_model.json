@@ -1,0 +1,99 @@
+{
+ "revision": 3,
+ "reports": 52626,
+ "companies": 39,
+ "reports_freeway": 9825,
+ "reports_surface": 42801,
+ "reference_rate": 0.4955,
+ "rho": 0.58,
+ "rho_estimate": 0.721,
+ "rho_set": [
+  0.1,
+  1.4
+ ],
+ "rho_set_lower_at_grid_edge": true,
+ "beta": 0.5,
+ "beta_range": [
+  0.25,
+  1.0
+ ],
+ "rho_road_length": 7.985,
+ "rho_vehicle_miles": 0.708,
+ "tied_surface": {
+  "stated": 0.1295,
+  "imputed": 0.4499
+ },
+ "tied_freeway": {
+  "stated": 0.5467,
+  "imputed": 0.8483
+ },
+ "shares_mid": {
+  "freeway": {
+   "traffic control": 0.0085,
+   "intersection turn": 0.0014,
+   "pedestrian": 0.001,
+   "cyclist": 0.0033,
+   "lane change or merge": 0.1248,
+   "lane keeping": 0.1428,
+   "other vehicle": 0.4299,
+   "obstruction": 0.0031,
+   "construction or emergency": 0.001,
+   "none stated": 0.2841
+  },
+  "surface": {
+   "traffic control": 0.0459,
+   "intersection turn": 0.0179,
+   "pedestrian": 0.0321,
+   "cyclist": 0.0115,
+   "lane change or merge": 0.0122,
+   "lane keeping": 0.0287,
+   "other vehicle": 0.1785,
+   "obstruction": 0.1413,
+   "construction or emergency": 0.0066,
+   "none stated": 0.5252
+  }
+ },
+ "situation_reports": {
+  "freeway": {
+   "traffic control": 65,
+   "intersection turn": 11,
+   "pedestrian": 8,
+   "cyclist": 25,
+   "lane change or merge": 961,
+   "lane keeping": 1100,
+   "other vehicle": 3311,
+   "obstruction": 24,
+   "construction or emergency": 8,
+   "none stated": 4312
+  },
+  "surface": {
+   "traffic control": 878,
+   "intersection turn": 342,
+   "pedestrian": 614,
+   "cyclist": 221,
+   "lane change or merge": 234,
+   "lane keeping": 550,
+   "other vehicle": 3416,
+   "obstruction": 2704,
+   "construction or emergency": 126,
+   "none stated": 33716
+  }
+ },
+ "validation": {
+  "listed_tracts": 1796,
+  "crashes": 324.0,
+  "spearman_rev3": 0.327,
+  "spearman_per_km_rev3": 0.451,
+  "spearman_rev2": 0.106,
+  "spearman_rev1": -0.199,
+  "spearman_crossings": 0.307,
+  "spearman_crash_model": 0.413,
+  "elasticity_rev3": 3.29,
+  "cpuc_base": 18.4,
+  "cpuc_rev3_offset": 17.5,
+  "map_loco_min_spearman": 0.935,
+  "spearman_per_km_rev2": 0.036,
+  "spearman_per_km_crossings": 0.469,
+  "text": "Checked against an independent record: in the 1,796 tracts AVs drove, the map ranks 324 DMV-reported autonomous-mode collisions (2019\u201324) per km of road within county at Spearman 0.45 (the road-length version it replaces: 0.04; crossing density alone: 0.47). No collision data were used to build it."
+ }
+}
