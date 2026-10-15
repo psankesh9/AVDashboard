@@ -12,30 +12,35 @@ What the DMV data can and cannot say. A disengagement report has a date, a compa
 no location. Each company also files its autonomous miles per vehicle per month. So:
 
   * per-mile rates are real at the company x month level (miles are filed);
-  * the split of a company's miles across road types is not filed. Revision 2 (disengagement_risk.py)
-    used each road type's share of California road length as that split; vehicle-miles (FHWA) is the
-    other natural choice, and the two give opposite answers for freeways (section 3 below);
-  * revision 3 estimates the freeway / surface ratio from real miles instead: in months when a company
+  * the split of a company's miles across road types is not filed. Revision 2 (disengagement_risk_rev2.py)
+    used each road type's share of California road length as that split; vehicle-miles (FHWA VM-2) is the
+    other natural choice, and the two give opposite answers for freeways;
+  * revision 3 estimates the freeway / surface ratio from filed miles instead: in months when a company
     files more of its reports on freeways, its miles were more freeway-heavy, so if freeway miles
     produce reports at a different rate, its total reports per mile move with that share
-    (`ratio_from_miles`, checked on simulated data with a known answer in `simulate_ratio`);
+    (`ratio_from_miles`). On simulated panels with known answers that estimator is biased under the
+    data's overdispersion (`simulate_ratio`), so the reported answer is a simulation-calibrated set
+    (`confidence_set`) and a median-unbiased point (`median_unbiased`);
   * the description says, for some reports, what road situation the vehicle was handling (a traffic
     light, a pedestrian, a merge...). avgap_llm.scen_* tags every distinct description; each situation
-    becomes a specialised model whose rate per mile scales with the matching OpenStreetMap feature
-    (signals and stop signs, junctions, crossings, bike lanes, ramps) in each grid cell.
+    with a mappable feature becomes a specialised model whose rate per mile scales with that feature
+    (TIED: OpenStreetMap signals and stops, junctions, crossings, bike lanes, multi-lane streets, POIs,
+    curvature, ramps; Caltrans AADT on freeways), to the power BETA.
 
-Layers, in the order notebook 17 runs them:
+Layers, in the order notebook 17 runs them (fit_all caches 1-4, score_all does 6):
 
   1. panel(): company x month counts by road class (freeway-type / surface) and miles
-  2. ratio_from_miles(), simulate_ratio(): freeway / surface rate per mile from real miles
+  2. ratio_from_miles(), ratio_by_company(), random_effects(), ratio_loco(), simulate_ratio(),
+     confidence_set(), median_unbiased(): the freeway / surface rate per mile from filed miles
   3. ratio_from_exposure(): the same ratio under road-length or vehicle-mile exposure (revision 2's
      company fixed-effects NB GLM), for comparison
-  4. situation_shares(): share of each road situation within each road class, cluster-bootstrapped
-  5. terrain(): OpenStreetMap features per ~500 m grid cell and per named road stretch (cached)
-  6. score_cells(): aggregated risk per 1,000 miles per cell with a Monte Carlo 90% range and the
-     number of reports behind it; rollup() to tract, city and county
-  7. validation: leave-one-company-out of the ratio, and an out-of-source check against located AV
-     collisions (the DMV OL 316 reports re-geocoded in notebook 07)
+  4. report_table(), situation_shares(), situation_bootstrap(): share of each road situation within
+     each road class, as stated and imputed, cluster-bootstrapped over companies
+  5. terrain(): OpenStreetMap (+ Caltrans AADT) features per 500 m grid cell, tract and named stretch
+  6. multipliers(), monte_carlo(), score_all(): relative risk per mile (1 = an average California road
+     mile) per cell, tract, city, county and stretch, with a Monte Carlo 90% range; outputs/ CSVs + JSON
+  7. crash_check(), panel_check(), situation_check(), map_loco(): checks against located AV collisions
+     (DMV OL 316 re-geocoded in notebook 07; Waymo's CPUC panel of notebook 06) and map stability
 """
 import os
 from array import array
@@ -468,7 +473,7 @@ def feature_ratios(T_, ref, prior_km=PRIOR_KM, tied=None, beta=None):
 
 def multipliers(T_, ref, rho, shares, tied=None, beta=None):
     """
-    Relative risk per mile of each place, 1 = an average California surface-street mile:
+    Relative risk per mile of each place, before scaling (score_all divides by California's road-km mean):
         surface part:  sum over situations of share x (its surface feature ratio, or 1 if untied)
         freeway part:  rho x the same with the freeway shares and freeway feature ratios
         place:         the two weighted by the place's surface and freeway road km
@@ -645,6 +650,35 @@ def situation_check(Lt, ol, alloc, layers, km="road_km"):
                      "Spearman per km: its own crashes": _spearman_per_km(x, col, "own", km, min_crashes=5),
                      "Spearman per km: all other crashes": _spearman_per_km(x, col, "other", km)})
     return pd.DataFrame(rows).set_index("situation")
+
+
+def situation_sheet(per_label=10, seed=0, write=True):
+    """
+    A blind check of the LLMs' road-situation labels for two human annotators: up to `per_label`
+    distinct descriptions per consensus situation (100 in all), shuffled. The sheet has the text and an
+    empty answer column; the key has the LLM consensus, its confidence and whether the two models agreed.
+    Written to outputs/situation_check_sheet.csv and situation_check_key.csv.
+    """
+    import avgap_llm as L
+    it = L.items().set_index("item_id")
+    cons = L.scen_consensus(L.scen_labels(list(SCEN_MODELS)), SCEN_MODELS)
+    rng = np.random.default_rng(seed)
+    pick = []
+    for lab, g in cons.groupby("situation"):
+        ids = g.index.to_numpy()
+        pick += list(rng.choice(ids, size=min(per_label, len(ids)), replace=False))
+    pick = list(rng.permutation(pick))
+    key = pd.DataFrame({"check_id": [f"S{i + 1:03d}" for i in range(len(pick))], "item_id": pick,
+                        "company": it.loc[pick, "company"].to_numpy(), "reports": it.loc[pick, "rows"].astype(int).to_numpy(),
+                        "llm_situation": cons.loc[pick, "situation"].to_numpy(),
+                        "llm_confidence": cons.loc[pick, "situation_conf"].round(3).to_numpy(),
+                        "llm_models_agree": cons.loc[pick, "situation_agree"].to_numpy()})
+    sheet = pd.DataFrame({"check_id": key.check_id, "description": it.loc[pick, "text"].to_numpy(),
+                          "situation (one of: " + "; ".join(SITUATIONS) + ")": "", "annotator": "", "notes": ""})
+    if write:
+        sheet.to_csv(os.path.join(OUT, "situation_check_sheet.csv"), index=False, encoding="utf-8-sig")
+        key.to_csv(os.path.join(OUT, "situation_check_key.csv"), index=False, encoding="utf-8-sig")
+    return sheet, key
 
 
 # ------------------------------------------------------------------ outputs for the dashboard
